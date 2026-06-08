@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="layout layout-3">
+  <div class="panel">
+    <h2>上传文档</h2>
+    <form class="stack" action="/ui/upload" method="post" enctype="multipart/form-data">
+      <input type="file" name="file" required>
+      <button type="submit">上传并入库</button>
+    </form>
+    <form action="/ui/documents/sync" method="post">
+      <button type="submit">同步 docs 目录</button>
+    </form>
+    <p class="muted">支持 PDF、DOCX、Markdown、HTML、TXT。首次启动会自动导入样例文档。</p>
+  </div>
+  <div class="panel">
+    <h2>发起问答</h2>
+    <form class="stack" action="/ui/chat" method="post">
+      <textarea name="question" rows="5" placeholder="例如：错误码 502 一般先查什么？" required></textarea>
+      <input type="text" name="session_id" placeholder="可选：已有 session_id">
+      <button type="submit">开始会话</button>
+    </form>
+    <div class="chips">
+      {% for question in sample_questions %}
+      <span>{{ question }}</span>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="panel">
+    <h2>运行评测</h2>
+    <form class="stack" action="/ui/eval" method="post">
+      <input type="text" name="dataset" value="cases.jsonl">
+      <button type="submit">执行样例评测</button>
+    </form>
+    <p class="muted">评测会检查检索命中、来源精度、回答完整度和澄清分支。</p>
+  </div>
+</section>
+
+<section class="layout layout-2">
+  <div class="panel">
+    <h2>知识库文档</h2>
+    <div class="list">
+      {% for document in documents %}
+      <a class="list-item" href="/ui/documents/{{ document.id }}">
+        <strong>{{ document.title }}</strong>
+        <span>{{ document.source_type }} · {{ document.chunk_count }} chunks</span>
+      </a>
+      {% else %}
+      <p class="muted">暂无文档。</p>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="panel">
+    <h2>最近会话</h2>
+    <div class="list">
+      {% for session in sessions %}
+      <a class="list-item" href="/ui/sessions/{{ session.id }}">
+        <strong>{{ session.title or session.id }}</strong>
+        <span>{{ session.updated_at }}</span>
+      </a>
+      {% else %}
+      <p class="muted">暂无会话。</p>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endblock %}

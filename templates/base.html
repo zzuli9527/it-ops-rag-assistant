@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IT Ops RAG Assistant</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="shell">
+      <div>
+        <p class="eyebrow">IT Ops RAG Assistant</p>
+        <h1>文档问答与检索调试</h1>
+      </div>
+      <nav class="nav">
+        <a href="/">Dashboard</a>
+      </nav>
+    </div>
+  </header>
+  <main class="shell page">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
+

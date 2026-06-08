@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h2>{{ document.title }}</h2>
+  <p class="meta">{{ document.filename }} · {{ document.source_type }} · {{ document.chunk_count }} chunks</p>
+  <form action="/ui/documents/{{ document.id }}/reindex" method="post">
+    <button type="submit">重新索引</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Chunk 预览</h2>
+  <div class="stack">
+    {% for chunk in chunks %}
+    <article class="chunk">
+      <div class="meta">{{ chunk.id }} · {{ chunk.section_path|join(' / ') }}</div>
+      <pre>{{ chunk.content }}</pre>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

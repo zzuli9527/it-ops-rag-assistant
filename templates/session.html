@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h2>会话 {{ id }}</h2>
+  <div class="meta">
+    {% for key, value in context.items() %}
+      {% if value %}
+      <span>{{ key }}={{ value }}</span>
+      {% endif %}
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <h2>继续提问</h2>
+  <form class="stack" action="/ui/chat" method="post">
+    <textarea name="question" rows="4" placeholder="继续追问..." required></textarea>
+    <input type="hidden" name="session_id" value="{{ id }}">
+    <button type="submit">发送</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>消息记录</h2>
+  <div class="stack">
+    {% for message in messages %}
+    <article class="message {{ message.role }}">
+      <div class="meta">{{ message.role }} · {{ message.created_at }}</div>
+      <pre>{{ message.content }}</pre>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}
+

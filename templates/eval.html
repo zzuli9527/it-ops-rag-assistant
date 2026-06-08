@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="layout layout-4">
+  <div class="panel stat">
+    <span>total</span>
+    <strong>{{ report.total }}</strong>
+  </div>
+  <div class="panel stat">
+    <span>retrieval@k</span>
+    <strong>{{ "%.2f"|format(report.retrieval_hit_rate_at_k) }}</strong>
+  </div>
+  <div class="panel stat">
+    <span>source precision</span>
+    <strong>{{ "%.2f"|format(report.source_precision) }}</strong>
+  </div>
+  <div class="panel stat">
+    <span>answer completeness</span>
+    <strong>{{ "%.2f"|format(report.answer_completeness) }}</strong>
+  </div>
+  <div class="panel stat">
+    <span>total ms</span>
+    <strong>{{ "%.1f"|format(report.timings_ms.total.avg_ms) }}</strong>
+  </div>
+</section>
+
+<section class="layout layout-4">
+  <div class="panel stat">
+    <span>retrieval p95</span>
+    <strong>{{ "%.1f"|format(report.timings_ms.retrieval.p95_ms) }}</strong>
+  </div>
+  <div class="panel stat">
+    <span>generation p95</span>
+    <strong>{{ "%.1f"|format(report.timings_ms.generation.p95_ms) }}</strong>
+  </div>
+  <div class="panel stat">
+    <span>persist p95</span>
+    <strong>{{ "%.1f"|format(report.timings_ms.persist.p95_ms) }}</strong>
+  </div>
+  <div class="panel stat">
+    <span>total p95</span>
+    <strong>{{ "%.1f"|format(report.timings_ms.total.p95_ms) }}</strong>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>评测报告</h2>
+  <div class="stack">
+    {% for item in report.reports %}
+    <article class="chunk">
+      <div class="meta">{{ item.question }}</div>
+      <p>action={{ item.action }} · retrieval_hit={{ item.retrieval_hit }} · completeness={{ item.answer_completeness }}</p>
+      <p>sources={{ item.retrieved_sources|join(', ') }}</p>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}
