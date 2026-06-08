@@ -1,26 +1,42 @@
 # IT Ops RAG Assistant
 
-An IT operations document QA project for local demo, evaluation, and GitHub presentation.
+面向 IT 运维与 DevOps 文档场景的本地可部署问答项目，支持多格式文档入库、混合检索、多轮问答、引用溯源与离线评测。
 
-## What it does
+## 项目定位
 
-- Parses `PDF / DOCX / Markdown / HTML / TXT`
-- Builds structured chunks with section metadata
-- Uses hybrid retrieval with TF-IDF style vector recall plus BM25
-- Supports multi-turn QA, clarification, citations, and offline evaluation
-- Exposes FastAPI APIs and a lightweight web UI
+这个项目用于演示一个公开可复现的 RAG 工程化原型，重点展示：
 
-## Project boundary
+- 文档解析与知识库构建
+- 混合检索与问答链路
+- 多轮追问与澄清分支
+- 引用来源返回
+- 离线评测与耗时分析
 
-This repository is prepared for public upload:
+## 主要能力
 
-- Public sample knowledge lives in `data/sample_docs/`
-- Local private knowledge should live in `local_docs/`
-- `.env`, `local_docs/`, uploaded files, and local databases are ignored by Git
+- 支持 `PDF / DOCX / Markdown / HTML / TXT` 共 5 类文档解析
+- 基于标题层级和段落结构进行切分，并保留章节元数据
+- 使用 `BM25 + 向量式召回` 的混合检索策略
+- 支持多轮问答、上下文补全和信息不足时的澄清追问
+- 支持返回引用来源与检索调试信息
+- 支持离线评测和请求级耗时拆解
 
-Do not upload internal company documents, screenshots, secrets, or API credentials.
+## 项目边界
 
-## Quick start
+本仓库已按公开发布方式整理：
+
+- 公开样例文档放在 `data/sample_docs/`
+- 本地私有知识库放在 `local_docs/`
+- `.env`、`local_docs/`、上传文件和本地数据库均已加入 `.gitignore`
+
+请不要上传：
+
+- 公司内部文档
+- 私有 PDF / DOCX
+- 真实工单、截图、配置文件
+- API Key、账号密码等敏感信息
+
+## 快速启动
 
 ```bash
 pip install -e ".[dev]"
@@ -28,35 +44,42 @@ copy .env.example .env
 python .\app\main.py
 ```
 
-Open `http://127.0.0.1:8011`.
+启动后访问：
 
-## Run evaluation
+```text
+http://127.0.0.1:8011
+```
+
+## 离线评测
 
 ```bash
 python .\scripts\run_eval.py
 ```
 
-The evaluation output includes:
+评测结果会输出：
 
 - `retrieval_hit_rate_at_k`
 - `source_precision`
 - `answer_completeness`
 - `clarification_trigger_rate`
-- stage timings with `avg / p50 / p95 / max`
+- 各阶段耗时的 `avg / p50 / p95 / max`
 
-## Key directories
+## 目录说明
 
-- `app/`: service, retrieval, parsing, prompts, API
-- `data/sample_docs/`: public demo documents
-- `data/sample_eval/`: public evaluation cases
-- `docs/`: project documentation only
-- `local_docs/`: local private knowledge, excluded from Git
-- `tests/`: unit and integration tests
+- `app/`：后端服务、检索、解析、Prompt、存储逻辑
+- `data/sample_docs/`：公开样例文档
+- `data/sample_eval/`：公开评测集
+- `docs/`：项目说明文档
+- `local_docs/`：本地私有知识库，不上传 GitHub
+- `tests/`：单元测试与集成测试
 
-## Current public demo status
+## 当前公开演示状态
 
-- 5 public sample troubleshooting documents
-- 17 automated tests
-- offline evaluation and request timing breakdown
+- 5 份公开样例故障文档
+- 17 项自动化测试
+- 支持问答、引用来源、检索调试与离线评测
 
-See [docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md) for a fuller summary.
+更多项目说明见：
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md)
