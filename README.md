@@ -150,6 +150,27 @@ python .\scripts\run_eval.py --include-local-docs
 - `local_docs/`：本地私有知识库，不上传 GitHub
 - `tests/`：单元测试与集成测试
 
+## 自动化测试覆盖
+
+当前项目共包含 `30` 个自动化测试用例，可通过 `pytest -q` 直接执行，主要覆盖 4 类场景：
+
+- `tests/test_service.py`：`16` 个，覆盖问答主链路、多轮追问、澄清分支、文档范围检索、评测执行、上传安全与文档去重
+- `tests/test_llm.py`：`12` 个，覆盖本地/远程 reasoner 切换、上下文字段抽取、结果归一化、答案 grounding 校验与上下文重置逻辑
+- `tests/test_parsers.py`：`1` 个，覆盖 `PDF / DOCX / Markdown / HTML / TXT` 五类文档解析
+- `tests/test_api.py`：`1` 个，覆盖 API 冒烟调用
+
+执行方式：
+
+```bash
+pytest -q
+```
+
+预期结果：
+
+```text
+30 passed
+```
+
 ## 当前公开演示状态
 
 - 5 份公开样例故障文档
