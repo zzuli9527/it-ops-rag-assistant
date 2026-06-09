@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from app.config import Settings
 from app.main import create_app
 
 
-def test_api_smoke(temp_settings) -> None:
+def test_api_smoke(temp_settings: Settings) -> None:
     client = TestClient(create_app(temp_settings))
 
     documents = client.get("/api/documents")

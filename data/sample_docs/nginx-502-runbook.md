@@ -1,47 +1,46 @@
-# Nginx 502 Troubleshooting Runbook
+# Nginx 502 排障手册
 
-## Symptoms
+## 现象
 
-- The gateway returns `502 Bad Gateway`.
-- Upstream latency rises sharply after a release or config change.
-- Access logs show `upstream prematurely closed connection`.
+- 网关返回 `502 Bad Gateway`。
+- 发布或配置变更后，上游服务延迟明显升高。
+- 访问日志中出现 `upstream prematurely closed connection`。
 
-## Quick Checks
+## 快速检查
 
-- Confirm the upstream service is healthy and listening on the configured port.
-- Review recent deployment records, gateway config changes, and timeout settings.
-- Compare gateway error timestamps with upstream application logs.
+- 确认上游服务健康，且正在预期端口监听。
+- 回看最近的部署记录、网关配置变更和超时参数调整。
+- 将网关报错时间与上游应用日志时间线对齐。
 
-## Common Root Causes
+## 常见根因
 
-### Upstream service not healthy
+### 上游服务不健康
 
-- The application process exited after deployment.
-- Health checks fail because required environment variables are missing.
-- The container was restarted repeatedly due to memory pressure.
+- 应用进程在发布后异常退出。
+- 健康检查失败，原因是缺少必要环境变量。
+- 容器因内存压力被频繁重启。
 
-### Timeout or connection pool saturation
+### 超时或连接池饱和
 
-- Upstream request timeout is shorter than the actual processing time.
-- Database connection exhaustion causes the service to respond too slowly.
-- Thread pools are blocked by slow downstream calls.
+- 上游请求超时时间短于实际处理耗时。
+- 数据库连接耗尽，导致服务响应明显变慢。
+- 线程池被慢下游调用阻塞。
 
-### Gateway configuration mismatch
+### 网关配置不一致
 
-- The upstream target points to the wrong port or hostname.
-- TLS termination is configured differently between environments.
-- Header size or body size limits were lowered by a recent change.
+- upstream 指向了错误的端口或主机名。
+- 不同环境的 TLS 终止配置不一致。
+- 最近一次变更降低了 Header 或 Body 大小限制。
 
-## Ordered Troubleshooting Steps
+## 排查步骤
 
-1. Check the upstream service status, restart history, and readiness probes.
-2. Inspect upstream application logs around the first 502 timestamp.
-3. Verify Nginx upstream host, port, and timeout configuration.
-4. Confirm database and cache dependencies are reachable from the service pod or host.
-5. If latency increased after a release, compare build version and rollback if needed.
+1. 检查上游服务状态、重启历史和 readiness 探针。
+2. 查看第一次出现 502 前后的上游应用日志。
+3. 核对 Nginx upstream 主机、端口和超时配置。
+4. 确认数据库、缓存等依赖从服务 Pod 或宿主机可达。
+5. 如果是发布后延迟升高，核对构建版本并视情况回滚。
 
-## Risk Notes
+## 风险提示
 
-- In production, avoid blind Nginx restarts before preserving logs and active config.
-- If many clients are affected, assess impact scope before applying a rollback.
-
+- 生产环境不要在未保留日志和当前配置前盲目重启 Nginx。
+- 如果影响范围较大，先评估受影响用户和流量，再执行回滚。

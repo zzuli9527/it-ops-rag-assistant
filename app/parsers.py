@@ -131,7 +131,7 @@ def _parse_html(path: Path) -> tuple[str, list[ParsedBlock]]:
 
 
 def _parse_docx(path: Path) -> tuple[str, list[ParsedBlock]]:
-    document = DocxDocument(path)
+    document = DocxDocument(str(path))
     title = path.stem
     heading_stack: list[str] = []
     blocks: list[ParsedBlock] = []
@@ -192,4 +192,3 @@ def _parse_pdf(path: Path) -> tuple[str, list[ParsedBlock]]:
             )
     doc.close()
     return title, blocks or [ParsedBlock(title=title, content=title, section_path=[title])]
-

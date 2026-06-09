@@ -55,11 +55,22 @@ Private local knowledge should be placed in `local_docs/`, which is ignored by G
 
 Based on the current public sample evaluation set:
 
-- automated tests: `17`
+- automated tests: `21`
 - retrieval hit rate: `83.3%`
 - source precision: `83.3%`
 - answer completeness: `77.8%`
-- clarification trigger rate: `100%`
+- action accuracy: `100%`
+- clarification trigger rate: `16.7%`
+- average total latency: `24.59s`
+- p95 total latency: `31.96s`
+
+Metric definition:
+
+- retrieval hit rate: whether the raw retrieval candidates cover the expected source document
+- source precision: whether the final cited sources in the answer match expected sources
+- answer completeness: how many expected troubleshooting points are covered in the answer
+- action accuracy: whether the system correctly chose `answer` or `clarify`
+- clarification trigger rate: the actual proportion of requests routed to clarification
 
 These metrics are suitable for a practice project and interview demo, not for production claims.
 
@@ -74,6 +85,9 @@ Before pushing:
 5. Re-run:
    - `pytest -q`
    - `python .\scripts\run_eval.py`
+
+`python .\scripts\run_eval.py` uses an isolated temporary database and only public sample docs by default.
+Use `python .\scripts\run_eval.py --include-local-docs` only for private local validation.
 
 ## Demo flow
 

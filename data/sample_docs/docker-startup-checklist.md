@@ -1,33 +1,32 @@
-# Docker Service Startup Checklist
+# Docker 服务启动检查清单
 
-## Symptoms
+## 现象
 
-- The container exits immediately after start.
-- Startup logs show port binding conflict or missing environment variables.
-- The process runs locally but fails in the target host environment.
+- 容器启动后立即退出。
+- 启动日志显示端口绑定冲突或缺少环境变量。
+- 本地能跑通，但在目标宿主机环境中启动失败。
 
-## Common Root Causes
+## 常见根因
 
-### Port conflict
+### 端口冲突
 
-- Another process is already using the exposed port.
-- The compose file maps the wrong internal port.
+- 其他进程已经占用了暴露端口。
+- compose 文件映射了错误的容器内部端口。
 
-### Missing runtime dependencies
+### 运行时依赖缺失
 
-- Required config files or environment variables were not mounted.
-- The service depends on a database, cache, or volume that is unavailable.
+- 必要配置文件或环境变量没有正确挂载。
+- 服务依赖的数据库、缓存或数据卷当前不可用。
 
-### Image or command issue
+### 镜像或启动命令问题
 
-- The image entrypoint differs from the expected startup command.
-- The startup script lacks execute permissions.
+- 镜像 entrypoint 与预期启动命令不一致。
+- 启动脚本缺少执行权限。
 
-## Ordered Troubleshooting Steps
+## 排查步骤
 
-1. Inspect container logs and exit code.
-2. Verify port usage on the host and compare with the compose mapping.
-3. Check mounted files, environment variables, and secrets.
-4. Validate dependency endpoints and network attachment.
-5. If the startup command changed, inspect the image diff or roll back to the last known good version.
-
+1. 查看容器日志和 `exit code`。
+2. 检查宿主机端口占用情况，并与 compose 映射配置对照。
+3. 核对挂载文件、环境变量和 secret 是否齐全。
+4. 确认依赖服务端点和网络挂载关系是否正常。
+5. 如果启动命令近期有变更，检查镜像 diff，必要时回滚到最近健康版本。

@@ -3,22 +3,23 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from math import log
-from typing import Iterable
+from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-from .models import ChunkRecord, RetrievalHit
+from .models import ChunkRecord, ParsedBlock, RetrievalHit
 from .utils import excerpt, mixed_tokenize, normalize_whitespace
 
 
 @dataclass(slots=True)
 class SearchDebug:
     query: str
-    vector_hits: list[dict[str, float]]
-    keyword_hits: list[dict[str, float]]
-    reranked_hits: list[dict[str, float]]
+    vector_hits: list[dict[str, Any]]
+    keyword_hits: list[dict[str, Any]]
+    reranked_hits: list[dict[str, Any]]
 
 
 class SimpleBM25:
@@ -38,7 +39,7 @@ class SimpleBM25:
         for term, count in self.doc_freqs.items():
             self.idf[term] = log((self.doc_count - count + 0.5) / (count + 0.5) + 1.0)
 
-    def score(self, query_tokens: list[str]) -> np.ndarray:
+    def score(self, query_tokens: list[str]) -> NDArray[np.float64]:
         scores = np.zeros(self.doc_count, dtype=float)
         for idx, freq in enumerate(self.term_freqs):
             doc_len = self.doc_lengths[idx] or 1
@@ -57,7 +58,7 @@ class StructuralChunker:
         self.target_chars = target_chars
         self.overlap_chars = overlap_chars
 
-    def chunk_blocks(self, document_id: str, title: str, blocks: Iterable) -> list[ChunkRecord]:
+    def chunk_blocks(self, document_id: str, title: str, blocks: list[ParsedBlock]) -> list[ChunkRecord]:
         chunk_records: list[ChunkRecord] = []
         chunk_index = 0
         for block in blocks:
@@ -149,7 +150,7 @@ class HybridIndex:
             lowercase=False,
             ngram_range=(1, 2),
         )
-        self.matrix = None
+        self.matrix: Any | None = None
         self.bm25: SimpleBM25 | None = None
         self.ready = False
 
@@ -213,7 +214,7 @@ class HybridIndex:
         max_vector = max(vector_scores[candidates]) or 1.0
         max_keyword = max(keyword_scores[candidates]) or 1.0
         hits: list[RetrievalHit] = []
-        reranked_debug: list[dict[str, float]] = []
+        reranked_debug: list[dict[str, Any]] = []
         for idx in candidates:
             combined = 0.65 * float(vector_scores[idx] / max_vector) + 0.35 * float(keyword_scores[idx] / max_keyword)
             chunk = self.chunks[idx]

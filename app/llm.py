@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import httpx
 
@@ -29,6 +29,10 @@ class Reasoner(Protocol):
     def build_answer(self, question: str, hits: list[RetrievalHit], context: SessionContext) -> str: ...
 
 
+class ChatClient(Protocol):
+    def chat(self, system_prompt: str, user_prompt: str) -> str: ...
+
+
 class LocalReasoner:
     FOLLOW_UP_RE = re.compile(r"(这个|那个|继续|然后|接着|下一步|进一步|怎么继续|还要|还需要)")
     SERVICE_RE = re.compile(r"\b(mysql|redis|nginx|docker|kubernetes|k8s|gateway|payment|api)\b", re.I)
@@ -36,6 +40,98 @@ class LocalReasoner:
         r"(mysql|redis|nginx|docker|kubernetes|k8s|pod|数据库|缓存|网关|容器|探针|日志|502|auth|认证)",
         re.I,
     )
+    TOPIC_PATTERNS = (
+        (re.compile(r"\b(jenkins|redis|mysql|nginx|docker|kubernetes|k8s|gateway|payment|api)\b", re.I), None),
+        (re.compile(r"(发布系统|构建平台|发布平台|流水线平台)"), "release-platform"),
+        (re.compile(r"([A-Za-z][A-Za-z0-9_-]+)\s*(?:service|服务)\b", re.I), "__group__"),
+        (re.compile(r"([A-Za-z0-9_\-\u4e00-\u9fa5]+)\s*(?:系统|平台)"), "__group__"),
+    )
+    TASK_PATTERNS = (
+        ("新建流水线", "create_pipeline"),
+        ("创建流水线", "create_pipeline"),
+        ("查看日志", "view_logs"),
+        ("查日志", "view_logs"),
+        ("回滚", "rollback"),
+        ("发布", "deploy"),
+        ("上线", "deploy"),
+        ("登录", "login"),
+        ("配置", "configure"),
+        ("设置", "configure"),
+        ("怎么用", "usage"),
+        ("如何使用", "usage"),
+        ("使用", "usage"),
+    )
+    TROUBLESHOOT_PATTERNS = ("排查", "故障", "报错", "失败", "异常", "error", "issue", "problem")
+    TOPIC_ALIASES = {
+        "k8s": "kubernetes",
+        "发布系统": "release-platform",
+        "发布平台": "release-platform",
+        "构建平台": "release-platform",
+        "流水线平台": "release-platform",
+    }
+    TASK_ALIASES = {
+        "create_pipeline": "create_pipeline",
+        "create-pipeline": "create_pipeline",
+        "deploy": "deploy",
+        "release": "deploy",
+        "rollback": "rollback",
+        "login": "login",
+        "configure": "configure",
+        "config": "configure",
+        "view_logs": "view_logs",
+        "view-logs": "view_logs",
+        "usage": "usage",
+        "troubleshoot": "troubleshoot",
+    }
+    ENV_ALIASES = {
+        "prod": "prod",
+        "production": "prod",
+        "prd": "prod",
+        "test": "test",
+        "uat": "test",
+        "dev": "dev",
+        "staging": "staging",
+        "pre": "staging",
+        "preprod": "staging",
+    }
+    COMPONENT_ALIASES = {
+        "database": "database",
+        "db": "database",
+        "connection_pool": "connection_pool",
+        "connection-pool": "connection_pool",
+        "container": "container",
+        "gateway": "gateway",
+        "logging": "logging",
+        "logs": "logging",
+        "k8s": "kubernetes",
+        "kubernetes": "kubernetes",
+        "docker": "docker",
+        "probe": "probe",
+        "pod": "pod",
+    }
+    ISSUE_ALIASES = {
+        "bad_gateway": "bad_gateway",
+        "bad-gateway": "bad_gateway",
+        "timeout": "timeout",
+        "connection_refused": "connection_refused",
+        "connection-refused": "connection_refused",
+        "crash_loop": "crash_loop",
+        "crash-loop": "crash_loop",
+        "authentication": "authentication",
+        "auth": "authentication",
+        "instant_exit": "instant_exit",
+        "instant-exit": "instant_exit",
+    }
+    GENERIC_INDEPENDENT_TASKS = {"login", "usage", "create_pipeline", "configure", "view_logs"}
+    FOLLOW_UP_FOCUS_RULES = (
+        (("密码", "凭据", "secret", "credential"), ("password", "credential", "secret", "rotation record")),
+        (("acl", "用户"), ("acl", "user permissions")),
+        (("tls", "证书"), ("tls", "certificate", "bootstrap mode")),
+        (("端点", "endpoint"), ("endpoint", "port", "cluster name")),
+        (("测试环境", "test", "uat"), ("test environment", "environment mismatch", "test redis", "credentials")),
+        (("生产环境", "prod", "production"), ("production environment", "environment mismatch", "production credentials")),
+    )
+    VERSION_RE = re.compile(r"\b(v?\d+\.\d+(?:\.\d+)?|release[-_ ]?\d+|build[-_ ]?\d+|[A-Za-z0-9._-]+:\d+\.\d+(?:\.\d+)?)\b", re.I)
 
     def __init__(self, prompt_manager: PromptManager, answer_min_score: float) -> None:
         self.prompt_manager = prompt_manager
@@ -46,6 +142,12 @@ class LocalReasoner:
         question_lower = question.lower()
         follow_up = self._references_previous(question)
 
+        if context.topic and context.topic.lower() not in question_lower:
+            pieces.append(f"topic={context.topic}")
+        if context.task and context.task.lower() not in question_lower:
+            pieces.append(f"task={context.task}")
+        if context.version and context.version.lower() not in question_lower:
+            pieces.append(f"version={context.version}")
         if context.service_name and context.service_name.lower() not in question_lower:
             if follow_up or "服务" not in question:
                 pieces.append(f"service={context.service_name}")
@@ -64,6 +166,7 @@ class LocalReasoner:
             last_user_messages = [msg["content"] for msg in history if msg["role"] == "user"][-2:]
             pieces.extend(last_user_messages[-1:])
 
+        pieces.extend(self._follow_up_focus_terms(question))
         pieces.extend(self._query_expansions(question, context))
         return normalize_whitespace(" ".join(dict.fromkeys(piece for piece in pieces if piece)))
 
@@ -71,19 +174,32 @@ class LocalReasoner:
         merged = SessionContext(**asdict(context))
         merged.last_question = question
 
+        topic = self._extract_topic(question)
+        service_name = self._extract_service_name(question, topic)
+        task = self._extract_task(question)
+        topic_changed = self._topic_changed(context, topic, service_name)
+        if topic_changed:
+            self._reset_topic_specific_fields(merged)
+        elif self._should_start_fresh_context(question, topic, service_name, task):
+            self._reset_full_context(merged)
+
         error_code = re.search(r"\b([45]\d{2}|[A-Z]{1,4}\d{3,5})\b", question)
         if error_code:
             merged.error_code = error_code.group(1)
+        version = self.VERSION_RE.search(question)
+        if version:
+            merged.version = version.group(1)
 
-        generic_service = re.search(r"\b([A-Za-z][A-Za-z0-9_-]+)\s+service\b", question, re.I)
-        chinese_service = re.search(r"([A-Za-z][A-Za-z0-9_-]+)\s*服务", question, re.I)
-        named_service = self.SERVICE_RE.search(question)
-        if generic_service:
-            merged.service_name = generic_service.group(1).lower()
-        elif chinese_service:
-            merged.service_name = chinese_service.group(1).lower()
-        elif named_service:
-            merged.service_name = named_service.group(1).lower()
+        if topic:
+            merged.topic = topic
+
+        if service_name:
+            merged.service_name = service_name
+        elif merged.topic and re.fullmatch(r"[a-z0-9_-]+", merged.topic):
+            merged.service_name = merged.topic
+
+        if task:
+            merged.task = task
 
         env_patterns = {
             "prod": "prod",
@@ -130,6 +246,8 @@ class LocalReasoner:
                 merged.suspected_issue = label
                 break
 
+        merged.need_clarification = self._should_mark_missing_context(question, merged)
+
         return merged
 
     def should_clarify(
@@ -143,11 +261,24 @@ class LocalReasoner:
         if top_score < self.answer_min_score:
             reasons.append("knowledge_low_confidence")
         if self._references_previous(question) and not any(
-            [context.service_name, context.error_code, context.component, context.suspected_issue, context.last_document_id]
+            [
+                context.topic,
+                context.task,
+                context.service_name,
+                context.error_code,
+                context.component,
+                context.suspected_issue,
+                context.last_document_id,
+            ]
         ):
             reasons.append("missing_reference")
         if len(question.strip()) < 6 and not self.EXPLICIT_ENTITY_RE.search(question):
             reasons.append("missing_entity")
+        if context.need_clarification and "knowledge_low_confidence" not in reasons:
+            reasons.append("missing_context")
+        if self._references_previous(question) and hits and any([context.topic, context.service_name, context.last_document_id]):
+            if self._follow_up_focus_terms(question) or context.environment:
+                reasons = [reason for reason in reasons if reason not in {"missing_reference", "missing_entity", "missing_context"}]
         return bool(reasons), reasons
 
     def build_clarification(self, question: str, context: SessionContext, reasons: list[str]) -> str:
@@ -159,7 +290,9 @@ class LocalReasoner:
             pieces.append("请至少提供服务名、错误码、环境或关键日志中的一项。")
         else:
             pieces.append("请提供服务名、错误码、环境、关键日志中的任意两项。")
-        if context.service_name:
+        if context.topic:
+            pieces.append(f"当前已识别主题：{context.topic}")
+        elif context.service_name:
             pieces.append(f"当前已识别服务：{context.service_name}")
         if context.error_code:
             pieces.append(f"当前已识别错误码：{context.error_code}")
@@ -228,14 +361,22 @@ class LocalReasoner:
         expansions: list[str] = []
         if "502" in question or context.suspected_issue == "bad_gateway":
             expansions.extend(["gateway", "upstream service", "timeout", "readiness probes"])
-        if "redis" in question_lower or context.service_name == "redis" or context.suspected_issue == "authentication":
+        if "redis" in question_lower or context.topic == "redis" or context.service_name == "redis" or context.suspected_issue == "authentication":
             expansions.extend(["redis", "password", "acl", "tls", "endpoint"])
-        if "mysql" in question_lower or "数据库" in question or context.component == "database":
+        if "mysql" in question_lower or context.topic == "mysql" or "数据库" in question or context.component == "database":
             expansions.extend(["mysql", "port 3306", "max_connections", "slow query logs"])
         if "crashloop" in question_lower or context.suspected_issue == "crash_loop":
             expansions.extend(["kubernetes", "pod events", "previous container logs", "probe"])
         if "docker" in question_lower or "秒退" in question or context.suspected_issue == "instant_exit":
             expansions.extend(["docker", "exit code", "port", "environment variables"])
+        if context.task == "create_pipeline":
+            expansions.extend(["pipeline", "job configuration", "parameters"])
+        elif context.task == "deploy":
+            expansions.extend(["deployment steps", "release", "environment variables"])
+        elif context.task == "rollback":
+            expansions.extend(["rollback", "version selection", "release history"])
+        elif context.task == "usage":
+            expansions.extend(["user guide", "steps", "configuration"])
         return expansions
 
     def _build_conclusion(self, question: str, hits: list[RetrievalHit], context: SessionContext) -> str:
@@ -244,6 +385,11 @@ class LocalReasoner:
             " ".join(hit.section_path) + " " + hit.content
             for hit in hits
         ).lower()
+
+        if any(token in question_lower for token in ("password", "secret", "credential")) or any(token in question for token in ("密码", "凭据")):
+            return "先核对应用侧实际加载的密码或 secret，再对照最近一次凭据轮换记录，确认是否仍在使用旧凭据。"
+        if "测试环境" in question or "test" in question_lower or context.environment == "test":
+            return "优先排查环境不匹配，确认应用是否连到了测试 Redis，却使用了生产凭据或错误的集群端点。"
 
         if "502" in question or context.suspected_issue == "bad_gateway":
             return "先检查上游服务健康状态、超时设置，以及网关转发配置是否发生变化。"
@@ -287,6 +433,140 @@ class LocalReasoner:
         if "mysql" in evidence or "database" in evidence:
             return "涉及数据库时避免直接清理连接池或强杀会话，先确认慢查询和事务影响。"
         return "执行操作前先固定问题现场，保留日志、告警时间线和最近一次变更记录。"
+
+    @classmethod
+    def _follow_up_focus_terms(cls, question: str) -> list[str]:
+        lowered = question.lower()
+        results: list[str] = []
+        for patterns, expansions in cls.FOLLOW_UP_FOCUS_RULES:
+            if any(pattern.lower() in lowered or pattern in question for pattern in patterns):
+                results.extend(expansions)
+        return results
+
+    @classmethod
+    def _extract_topic(cls, question: str) -> str | None:
+        for pattern, replacement in cls.TOPIC_PATTERNS:
+            match = pattern.search(question)
+            if not match:
+                continue
+            if replacement == "__group__":
+                return cls.normalize_topic(match.group(1))
+            if replacement:
+                return cls.normalize_topic(replacement)
+            return cls.normalize_topic(match.group(1))
+        return None
+
+    @classmethod
+    def _extract_task(cls, question: str) -> str | None:
+        lowered = question.lower()
+        if any(phrase.lower() in lowered for phrase in cls.TROUBLESHOOT_PATTERNS):
+            return "troubleshoot"
+        for phrase, label in cls.TASK_PATTERNS:
+            if phrase.lower() in lowered:
+                return cls.normalize_task(label)
+        return None
+
+    @classmethod
+    def _extract_service_name(cls, question: str, topic: str | None) -> str | None:
+        generic_service = re.search(r"\b([A-Za-z][A-Za-z0-9_-]+)\s+service\b", question, re.I)
+        chinese_service = re.search(r"([A-Za-z][A-Za-z0-9_-]+)\s*服务", question, re.I)
+        named_service = cls.SERVICE_RE.search(question)
+        if generic_service:
+            return generic_service.group(1).lower()
+        if chinese_service:
+            return chinese_service.group(1).lower()
+        if named_service:
+            return named_service.group(1).lower()
+        if topic and re.fullmatch(r"[a-z0-9_-]+", topic):
+            return topic
+        return None
+
+    @staticmethod
+    def _topic_changed(context: SessionContext, topic: str | None, service_name: str | None) -> bool:
+        current_subject = context.topic or context.service_name
+        next_subject = topic or service_name
+        if not current_subject or not next_subject:
+            return False
+        return current_subject.lower() != next_subject.lower()
+
+    @staticmethod
+    def _reset_topic_specific_fields(context: SessionContext) -> None:
+        context.task = None
+        context.version = None
+        context.error_code = None
+        context.component = None
+        context.suspected_issue = None
+        context.need_clarification = None
+
+    @classmethod
+    def _should_start_fresh_context(
+        cls,
+        question: str,
+        topic: str | None,
+        service_name: str | None,
+        task: str | None,
+    ) -> bool:
+        if cls._references_previous(question):
+            return False
+        if topic or service_name:
+            return False
+        return task in cls.GENERIC_INDEPENDENT_TASKS
+
+    @staticmethod
+    def _reset_full_context(context: SessionContext) -> None:
+        context.topic = None
+        context.task = None
+        context.version = None
+        context.need_clarification = None
+        context.service_name = None
+        context.error_code = None
+        context.environment = None
+        context.component = None
+        context.suspected_issue = None
+        context.last_document_id = None
+
+    @classmethod
+    def normalize_topic(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = normalize_whitespace(value).lower()
+        if not normalized:
+            return None
+        return cls.TOPIC_ALIASES.get(normalized, normalized)
+
+    @classmethod
+    def normalize_task(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = normalize_whitespace(value).lower().replace(" ", "_")
+        return cls.TASK_ALIASES.get(normalized, normalized or None)
+
+    @classmethod
+    def normalize_environment(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = normalize_whitespace(value).lower().replace(" ", "")
+        return cls.ENV_ALIASES.get(normalized, normalized or None)
+
+    @classmethod
+    def normalize_component(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = normalize_whitespace(value).lower().replace(" ", "_")
+        return cls.COMPONENT_ALIASES.get(normalized, normalized or None)
+
+    @classmethod
+    def normalize_issue(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = normalize_whitespace(value).lower().replace(" ", "_")
+        return cls.ISSUE_ALIASES.get(normalized, normalized or None)
+
+    @classmethod
+    def _should_mark_missing_context(cls, question: str, context: SessionContext) -> bool:
+        if not cls._references_previous(question):
+            return False
+        return not any([context.topic, context.service_name, context.error_code, context.component, context.last_document_id])
 
     @staticmethod
     def _source_label(hit: RetrievalHit) -> str:
@@ -355,7 +635,7 @@ class OpenAICompatibleReasoner:
 
     def __init__(
         self,
-        client: OpenAICompatibleChatClient,
+        client: ChatClient,
         prompt_manager: PromptManager,
         fallback: LocalReasoner,
     ) -> None:
@@ -378,7 +658,7 @@ class OpenAICompatibleReasoner:
         try:
             response = self.client.chat(system_prompt, json.dumps(payload, ensure_ascii=False))
             rewritten = normalize_whitespace(response.splitlines()[0].strip())
-            if not self._rewrite_is_usable(rewritten, fallback_query):
+            if not self._rewrite_is_usable(question, rewritten, fallback_query):
                 return fallback_query
             return rewritten
         except Exception:
@@ -388,28 +668,50 @@ class OpenAICompatibleReasoner:
         fallback_context = self.fallback.extract_context(question, context)
         system_prompt = (
             self.prompt_manager.load("context_extraction")
-            or "Extract JSON with service_name, error_code, environment, component, suspected_issue."
+            or (
+                "Extract JSON with topic, task, environment, version, error_code, component, "
+                "suspected_issue, need_clarification, service_name."
+            )
         )
         payload = {
             "question": question,
             "current_context": asdict(context),
             "schema": {
+                "topic": "string|null",
+                "task": "string|null",
+                "environment": "string|null",
+                "version": "string|null",
                 "service_name": "string|null",
                 "error_code": "string|null",
-                "environment": "string|null",
                 "component": "string|null",
                 "suspected_issue": "string|null",
+                "need_clarification": "boolean|null",
             },
         }
         try:
             raw = self.client.chat(system_prompt, json.dumps(payload, ensure_ascii=False))
             parsed = self._extract_json(raw)
             merged = asdict(fallback_context)
-            for key in ("service_name", "error_code", "environment", "component", "suspected_issue"):
+            normalizers = {
+                "topic": self.fallback.normalize_topic,
+                "task": self.fallback.normalize_task,
+                "environment": self.fallback.normalize_environment,
+                "version": lambda value: normalize_whitespace(value) if value else None,
+                "service_name": lambda value: normalize_whitespace(value).lower() if value else None,
+                "error_code": lambda value: normalize_whitespace(value) if value else None,
+                "component": self.fallback.normalize_component,
+                "suspected_issue": self.fallback.normalize_issue,
+            }
+            for key, normalizer in normalizers.items():
                 value = parsed.get(key)
                 if isinstance(value, str) and value.strip():
-                    merged[key] = value.strip()
-            return SessionContext(**merged, last_question=question)
+                    normalized = normalizer(value.strip())
+                    if normalized:
+                        merged[key] = normalized
+            if not merged.get("topic") and merged.get("service_name"):
+                merged["topic"] = merged["service_name"]
+            merged["last_question"] = question
+            return SessionContext(**merged)
         except Exception:
             return fallback_context
 
@@ -486,13 +788,15 @@ class OpenAICompatibleReasoner:
     @staticmethod
     def _extract_json(raw: str) -> dict[str, Any]:
         try:
-            return json.loads(raw)
+            parsed = json.loads(raw)
+            return cast(dict[str, Any], parsed) if isinstance(parsed, dict) else {}
         except json.JSONDecodeError:
             match = re.search(r"\{.*\}", raw, flags=re.S)
             if not match:
                 return {}
             try:
-                return json.loads(match.group(0))
+                parsed = json.loads(match.group(0))
+                return cast(dict[str, Any], parsed) if isinstance(parsed, dict) else {}
             except json.JSONDecodeError:
                 return {}
 
@@ -510,7 +814,7 @@ class OpenAICompatibleReasoner:
         return normalized
 
     @staticmethod
-    def _rewrite_is_usable(rewritten: str, fallback_query: str) -> bool:
+    def _rewrite_is_usable(question: str, rewritten: str, fallback_query: str) -> bool:
         normalized = rewritten.strip().lower()
         if not normalized:
             return False
@@ -519,8 +823,26 @@ class OpenAICompatibleReasoner:
         rewritten_tokens = set(mixed_tokenize(normalized))
         fallback_tokens = set(mixed_tokenize(fallback_query.lower()))
         if rewritten_tokens and fallback_tokens and rewritten_tokens & fallback_tokens:
+            if OpenAICompatibleReasoner._preserves_follow_up_focus(question, normalized, fallback_query.lower()):
+                return True
+        return len(normalized) >= max(8, len(fallback_query) // 3) and OpenAICompatibleReasoner._preserves_follow_up_focus(
+            question,
+            normalized,
+            fallback_query.lower(),
+        )
+
+    @staticmethod
+    def _preserves_follow_up_focus(question: str, rewritten: str, fallback_query: str) -> bool:
+        focus_terms = LocalReasoner._follow_up_focus_terms(question)
+        if not focus_terms:
             return True
-        return len(normalized) >= max(8, len(fallback_query) // 3)
+        rewritten_lower = rewritten.lower()
+        fallback_lower = fallback_query.lower()
+        for term in focus_terms:
+            term_lower = term.lower()
+            if term_lower in fallback_lower and term_lower not in rewritten_lower:
+                return False
+        return True
 
     @staticmethod
     def _has_answer_shape(answer: str) -> bool:

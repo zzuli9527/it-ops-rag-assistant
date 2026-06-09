@@ -46,23 +46,26 @@ class RagService:
         )
         self.rebuild_index()
 
-    def bootstrap(self) -> None:
-        self.sync_knowledge_sources()
+    def bootstrap(self, *, include_knowledge_docs: bool = True) -> None:
+        self.sync_knowledge_sources(include_knowledge_docs=include_knowledge_docs)
         self.rebuild_index()
 
     def rebuild_index(self) -> None:
         self.index.rebuild(self.store.list_chunks())
 
-    def sync_knowledge_sources(self) -> dict[str, int]:
+    def sync_knowledge_sources(self, *, include_knowledge_docs: bool = True) -> dict[str, int]:
         imported = 0
         skipped = 0
-        for directory in (self.settings.sample_docs_dir, self.settings.knowledge_docs_dir):
+        directories = [self.settings.sample_docs_dir]
+        if include_knowledge_docs:
+            directories.append(self.settings.knowledge_docs_dir)
+        for directory in directories:
             for path in sorted(directory.glob("*")):
                 if not path.is_file() or path.suffix.lower() not in SUPPORTED_SUFFIXES:
                     continue
                 file_bytes = path.read_bytes()
                 checksum = sha256_bytes(file_bytes)
-                existing = self.store.get_document_by_filename(path.name)
+                existing = self.store.get_document_by_path(str(path.resolve()))
                 if existing and existing.checksum == checksum:
                     skipped += 1
                     continue
@@ -72,7 +75,13 @@ class RagService:
         return {"imported": imported, "skipped": skipped}
 
     def ingest_upload(self, filename: str, data: bytes) -> UploadResult:
-        upload_path = self.settings.root_dir / self.settings.upload_dir / filename
+        upload_dir = self._resolve_path(self.settings.upload_dir)
+        safe_name = Path(filename).name
+        if not safe_name or safe_name in {".", ".."}:
+            raise ValueError("invalid filename")
+        upload_path = (upload_dir / safe_name).resolve()
+        if upload_path.parent != upload_dir.resolve():
+            raise ValueError("invalid filename")
         ensure_parent(upload_path)
         upload_path.write_bytes(data)
         return self.ingest_path(upload_path, copy_to_uploads=False, raw_bytes=data)
@@ -86,13 +95,14 @@ class RagService:
         rebuild: bool = True,
     ) -> UploadResult:
         if copy_to_uploads:
-            target = self.settings.root_dir / self.settings.upload_dir / path.name
+            target = self._resolve_path(self.settings.upload_dir) / path.name
             ensure_parent(target)
             target.write_bytes(path.read_bytes())
             path = target
+        path = path.resolve()
         file_bytes = raw_bytes if raw_bytes is not None else path.read_bytes()
         title, source_type, blocks = parse_file(path)
-        document_id = slugify(path.stem)
+        document_id = self._build_document_id(path)
         document = DocumentRecord(
             id=document_id,
             filename=path.name,
@@ -179,7 +189,7 @@ class RagService:
 
         scope = set(document_scope) if document_scope else None
         recent_docs = self._recent_document_ids(history, updated_context)
-        preferred_docs = None if scope else self._resolve_preferred_documents(question, rewritten_query, recent_docs)
+        preferred_docs = scope or self._resolve_preferred_documents(question, rewritten_query, recent_docs)
 
         retrieval_started = perf_counter()
         hits, debug = self.index.search(
@@ -196,7 +206,7 @@ class RagService:
         generation_started = perf_counter()
         needs_clarify, reasons = self.reasoner.should_clarify(question, answer_hits or hits, updated_context)
         if scope and (answer_hits or hits):
-            reasons = [reason for reason in reasons if reason not in {"missing_entity", "missing_reference"}]
+            reasons = [reason for reason in reasons if reason not in {"missing_entity", "missing_reference", "missing_context"}]
             needs_clarify = bool(reasons)
         if needs_clarify:
             answer = self.reasoner.build_clarification(question, updated_context, reasons)
@@ -244,6 +254,7 @@ class RagService:
             action=action,
             question=question,
             rewritten_query=rewritten_query,
+            retrieval_hits=hits,
             sources=answer_hits,
             context=updated_context,
             debug={**self._debug_payload(debug), "timings_ms": timings_ms},
@@ -258,10 +269,11 @@ class RagService:
     ) -> dict[str, Any]:
         context = self.store.load_session_context(session_id) if session_id else SessionContext()
         history = self.store.list_messages(session_id) if session_id else []
-        rewritten_query = self.reasoner.rewrite_query(question, context, history)
+        updated_context = self.reasoner.extract_context(question, context)
+        rewritten_query = self.reasoner.rewrite_query(question, updated_context, history)
         scope = set(document_scope) if document_scope else None
-        recent_docs = self._recent_document_ids(history, context)
-        preferred_docs = None if scope else self._resolve_preferred_documents(question, rewritten_query, recent_docs)
+        recent_docs = self._recent_document_ids(history, updated_context)
+        preferred_docs = scope or self._resolve_preferred_documents(question, rewritten_query, recent_docs)
         hits, debug = self.index.search(
             rewritten_query,
             top_k=self.settings.retrieval_top_k,
@@ -273,6 +285,7 @@ class RagService:
         return {
             "question": question,
             "rewritten_query": rewritten_query,
+            "context": asdict(updated_context),
             "document_scope": sorted(scope) if scope else None,
             "vector_hits": debug.vector_hits,
             "keyword_hits": debug.keyword_hits,
@@ -287,7 +300,8 @@ class RagService:
         retrieval_hits = 0
         source_precision_total = 0.0
         completeness_total = 0.0
-        clarification_hits = 0
+        action_hits = 0
+        clarification_count = 0
         stage_samples: dict[str, list[float]] = {
             "context": [],
             "rewrite": [],
@@ -304,12 +318,13 @@ class RagService:
             )
             expected_sources: list[str] = case.get("expected_sources", [])
             expected_points: list[str] = case.get("expected_answer_points", [])
-            actual_sources = [self._source_identifier(hit) for hit in result.sources]
-            source_matches = [source for source in actual_sources if source in expected_sources]
-            retrieval_hit = bool(set(actual_sources) & set(expected_sources))
+            retrieved_sources = [self._source_identifier(hit) for hit in result.retrieval_hits]
+            answer_sources = [self._source_identifier(hit) for hit in result.sources]
+            source_matches = [source for source in answer_sources if source in expected_sources]
+            retrieval_hit = bool(set(retrieved_sources) & set(expected_sources))
             if retrieval_hit:
                 retrieval_hits += 1
-            source_precision = len(source_matches) / max(len(actual_sources), 1)
+            source_precision = len(source_matches) / max(len(answer_sources), 1)
             source_precision_total += source_precision
             answer_text = result.answer.lower()
             matched_points = [point for point in expected_points if point.lower() in answer_text]
@@ -318,14 +333,17 @@ class RagService:
             expect_clarify = bool(case.get("expect_clarify", False))
             clarification_ok = result.action == "clarify" if expect_clarify else result.action == "answer"
             if clarification_ok:
-                clarification_hits += 1
+                action_hits += 1
+            if result.action == "clarify":
+                clarification_count += 1
             reports.append(
                 {
                     "question": case["question"],
                     "action": result.action,
                     "document_scope": case.get("document_scope"),
                     "retrieval_hit": retrieval_hit,
-                    "retrieved_sources": actual_sources,
+                    "retrieved_sources": retrieved_sources,
+                    "answer_sources": answer_sources,
                     "source_precision": round(source_precision, 3),
                     "answer_completeness": round(completeness, 3),
                     "matched_points": matched_points,
@@ -342,21 +360,22 @@ class RagService:
 
         total = len(cases)
         run_id = uuid.uuid4().hex
-        report = {
-            "run_id": run_id,
-            "total": total,
-            "retrieval_hit_rate_at_k": retrieval_hits / max(total, 1),
-            "source_precision": source_precision_total / max(total, 1),
-            "answer_completeness": completeness_total / max(total, 1),
-            "clarification_trigger_rate": clarification_hits / max(total, 1),
-            "reports": reports,
-            "timings_ms": {
+        report = EvalResult(
+            run_id=run_id,
+            total=total,
+            retrieval_hit_rate_at_k=retrieval_hits / max(total, 1),
+            source_precision=source_precision_total / max(total, 1),
+            answer_completeness=completeness_total / max(total, 1),
+            action_accuracy=action_hits / max(total, 1),
+            clarification_trigger_rate=clarification_count / max(total, 1),
+            reports=reports,
+            timings_ms={
                 stage: self._timing_summary(values)
                 for stage, values in stage_samples.items()
             },
-        }
-        self.store.save_eval_run(run_id, dataset_file.name, report)
-        return EvalResult(**report)
+        )
+        self.store.save_eval_run(run_id, dataset_file.name, report.model_dump())
+        return report
 
     def get_eval_run(self, run_id: str) -> dict[str, Any] | None:
         return self.store.get_eval_run(run_id)
@@ -397,13 +416,7 @@ class RagService:
         if not hits:
             return []
 
-        candidates = hits
-        if not scope:
-            sample_hits = [hit for hit in hits if hit.document_id in self.sample_document_ids]
-            if sample_hits:
-                candidates = sample_hits
-
-        ranked = sorted(candidates, key=lambda hit: self._answer_hit_sort_key(hit, question), reverse=True)
+        ranked = sorted(hits, key=lambda hit: self._answer_hit_sort_key(hit, question), reverse=True)
         selected: list[RetrievalHit] = []
         per_doc_counts: dict[str, int] = {}
         max_per_doc = 3 if scope and len(scope) == 1 else 2
@@ -449,12 +462,18 @@ class RagService:
             "acl" in content_lower or "tls" in content_lower or "password" in content_lower
         ):
             question_bonus = 1.5
-        elif ("docker" in question_lower or "秒退" in question) and (
+        if any(token in question for token in ("密码", "凭据")) or any(token in question_lower for token in ("password", "secret", "credential")):
+            if any(token in content_lower for token in ("password", "secret", "credential", "rotation")):
+                question_bonus = max(question_bonus, 1.8)
+        if "测试环境" in question or any(token in question_lower for token in ("test", "uat")):
+            if any(token in content_lower for token in ("test redis", "production credentials", "environment mismatch", "wrong endpoint")):
+                question_bonus = max(question_bonus, 1.8)
+        if ("docker" in question_lower or "秒退" in question) and (
             "exit code" in content_lower or "environment variables" in content_lower or "port" in content_lower
         ):
-            question_bonus = 1.5
-        elif "502" in question and ("upstream" in content_lower or "timeout" in content_lower):
-            question_bonus = 1.5
+            question_bonus = max(question_bonus, 1.5)
+        if "502" in question and ("upstream" in content_lower or "timeout" in content_lower):
+            question_bonus = max(question_bonus, 1.5)
 
         return (section_weight, question_bonus, hit.score)
 
@@ -516,3 +535,23 @@ class RagService:
                 if len(results) >= 3:
                     return results
         return results
+
+    def _build_document_id(self, path: Path) -> str:
+        existing = self.store.get_document_by_path(str(path))
+        if existing is not None:
+            return existing.id
+
+        base_id = slugify(path.stem)
+        conflict = self.store.get_document(base_id)
+        if conflict is None:
+            return base_id
+        if Path(conflict.file_path).resolve() == path.resolve():
+            return base_id
+
+        suffix = sha256_text(str(path).lower())[:8]
+        return f"{base_id}-{suffix}"
+
+    def _resolve_path(self, raw_path: Path) -> Path:
+        if raw_path.is_absolute():
+            return raw_path
+        return (self.settings.root_dir / raw_path).resolve()

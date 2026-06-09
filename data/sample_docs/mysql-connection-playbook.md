@@ -1,47 +1,46 @@
-# MySQL Connection Troubleshooting Playbook
+# MySQL 连接排障手册
 
-## Symptoms
+## 现象
 
-- Application startup fails with `Connection refused`.
-- Connection pool acquisition time keeps rising.
-- Error logs show `Too many connections` or frequent reconnect attempts.
+- 应用启动时报 `Connection refused`。
+- 连接池获取连接的耗时持续升高。
+- 错误日志中出现 `Too many connections` 或频繁重连。
 
-## Diagnostic Signals
+## 诊断信号
 
-- MySQL process status and port listening state.
-- Current active connections, max connections, and slow query count.
-- Recent schema changes, failover events, or password rotation records.
+- MySQL 进程状态以及端口监听状态。
+- 当前活跃连接数、`max_connections`、慢查询数量。
+- 最近的表结构变更、故障切换事件或密码轮换记录。
 
-## Common Root Causes
+## 常见根因
 
-### Database not reachable
+### 数据库不可达
 
-- The database process is down or the service endpoint is wrong.
-- Security group or firewall rules block traffic from the application node.
-- DNS resolution points to an old host after failover.
+- 数据库进程未启动，或服务端点配置错误。
+- 安全组或防火墙拦截了应用节点的流量。
+- 故障切换后 DNS 仍指向旧主机。
 
-### Connection exhaustion
+### 连接耗尽
 
-- The application leaks connections because transactions are not closed.
-- Slow queries keep sessions occupied for too long.
-- Pool size is larger than the database limit across replicas.
+- 应用存在连接泄漏，事务未及时关闭。
+- 慢查询长时间占用会话。
+- 多副本总连接池规模超过数据库上限。
 
-### Authentication or configuration errors
+### 认证或配置错误
 
-- Credentials were rotated but the application still uses old secrets.
-- TLS or charset configuration changed after a version upgrade.
-- Application configuration references the wrong environment.
+- 凭据已轮换，但应用仍在使用旧 secret。
+- 版本升级后 TLS 或字符集配置发生变化。
+- 应用配置引用了错误环境。
 
-## Ordered Troubleshooting Steps
+## 排查步骤
 
-1. Confirm the MySQL process is running and the application host can reach port 3306.
-2. Check `Threads_connected`, `max_connections`, and slow query logs.
-3. Review connection pool settings and recent release changes.
-4. Validate the username, password, TLS settings, and target endpoint.
-5. If `Too many connections` appears, find long-running queries before forcing session cleanup.
+1. 确认 MySQL 进程正在运行，且应用主机可访问 3306 端口。
+2. 查看 `Threads_connected`、`max_connections` 和慢查询日志。
+3. 检查连接池配置以及最近一次发布改动。
+4. 核对用户名、密码、TLS 设置和目标端点。
+5. 如果出现 `Too many connections`，先定位长事务或长查询，再决定是否清理会话。
 
-## Risk Notes
+## 风险提示
 
-- Do not kill active sessions in production without checking transaction impact.
-- If credential rotation is involved, verify all replicas and scheduled jobs use the same secret set.
-
+- 生产环境不要在未评估事务影响前直接杀掉活跃会话。
+- 若涉及凭据轮换，需确认所有副本和定时任务使用的是同一套 secret。

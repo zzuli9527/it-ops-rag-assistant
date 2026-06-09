@@ -1,35 +1,34 @@
-# Kubernetes CrashLoopBackOff Guide
+# Kubernetes CrashLoopBackOff 排障指南
 
-## Symptoms
+## 现象
 
-- The pod state becomes `CrashLoopBackOff`.
-- Restart count keeps increasing after deployment.
-- The application becomes ready for a short time and exits again.
+- Pod 状态变为 `CrashLoopBackOff`。
+- 发布后重启次数持续增加。
+- 应用短暂就绪后又再次退出。
 
-## Common Root Causes
+## 常见根因
 
-### Startup command or env config is wrong
+### 启动命令或环境配置错误
 
-- Required environment variables are missing.
-- The startup command references a file path that does not exist in the image.
-- The container expects a config file that was not mounted.
+- 缺少必要环境变量。
+- 启动命令引用了镜像中不存在的文件路径。
+- 容器依赖的配置文件没有正确挂载。
 
-### Dependency not ready
+### 依赖未就绪
 
-- The application fails immediately because the database or cache is unreachable.
-- A migration job locks startup because the schema version is incompatible.
+- 数据库或缓存不可达，应用启动后立即失败。
+- 迁移任务阻塞启动，原因是表结构版本不兼容。
 
-### Resource or probe configuration issue
+### 资源或探针配置问题
 
-- Memory limits are too low and the container is OOM killed.
-- Liveness probes are too aggressive during warm-up.
-- Readiness probes call an endpoint that depends on a downstream system.
+- 内存限制过低，容器被 OOM Kill。
+- liveness 探针在预热阶段过于激进。
+- readiness 探针访问了依赖下游系统的接口。
 
-## Ordered Troubleshooting Steps
+## 排查步骤
 
-1. Inspect pod events, restart reason, and the previous container logs.
-2. Compare environment variables, mounted configs, and image tag with the last healthy version.
-3. Check dependency reachability from the cluster network.
-4. Review probe thresholds, startup time, and container resource usage.
-5. Roll back the deployment if the failure started after a release and the impact is broad.
-
+1. 查看 Pod events、重启原因以及 previous container logs。
+2. 对比环境变量、挂载配置和镜像 tag 与最近一次健康版本的差异。
+3. 检查集群网络中依赖服务的可达性。
+4. 核对探针阈值、启动耗时和容器资源使用情况。
+5. 如果问题出现在发布后且影响范围较大，优先考虑回滚。

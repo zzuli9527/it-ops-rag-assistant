@@ -1,44 +1,43 @@
-# Redis Authentication Troubleshooting
+# Redis 认证排障手册
 
-## Symptoms
+## 现象
 
-- The client reports `NOAUTH Authentication required`.
-- Services reconnect repeatedly after a credential update.
-- Cache hit rate drops because requests bypass Redis after auth errors.
+- 客户端报 `NOAUTH Authentication required`。
+- 凭据更新后，服务反复重连。
+- 认证失败后请求绕过 Redis，导致缓存命中率下降。
 
-## Quick Checks
+## 快速检查
 
-- Confirm the Redis endpoint and port used by the service.
-- Verify whether ACL users or a single password is enabled.
-- Compare application secrets with the latest credential management record.
+- 确认服务使用的 Redis 端点和端口是否正确。
+- 确认当前是 ACL 用户模式还是单密码模式。
+- 将应用侧 secret 与最近一次凭据管理记录进行比对。
 
-## Common Root Causes
+## 常见根因
 
-### Wrong password or ACL user
+### 密码或 ACL 用户错误
 
-- The application still uses an old password after rotation.
-- The ACL user exists but lacks the required command permissions.
-- The secret injection job updated one service but missed another deployment.
+- 密码轮换后，应用仍在使用旧密码。
+- ACL 用户存在，但缺少所需命令权限。
+- secret 注入任务只更新了部分服务，遗漏了其他部署。
 
-### Environment mismatch
+### 环境不匹配
 
-- The application points to the test Redis while using production credentials.
-- Multiple clusters share similar names and the wrong endpoint was copied.
+- 应用连到了测试 Redis，却使用了生产凭据。
+- 多个集群命名相近，复制了错误的端点。
 
-### Connection bootstrap issues
+### 连接初始化问题
 
-- TLS is required but the client is configured for plain TCP.
-- Sentinel or cluster mode requires different bootstrap options.
+- Redis 要求 TLS，但客户端仍按明文 TCP 连接。
+- Sentinel 或 Cluster 模式下，客户端初始化参数不正确。
 
-## Ordered Troubleshooting Steps
+## 排查步骤
 
-1. Check whether the failure is password related, ACL related, or endpoint related.
-2. Validate the deployed secret values against the latest rotation record.
-3. Confirm client bootstrap mode, TLS settings, and Redis cluster role.
-4. Test authentication from the same runtime environment as the service.
-5. After fixing credentials, monitor reconnect rate and cache hit recovery.
+1. 先判断问题更偏向密码、ACL 用户还是端点错误。
+2. 核对已部署 secret 与最近一次凭据轮换记录是否一致。
+3. 确认客户端初始化模式、TLS 设置和 Redis 集群角色。
+4. 在与业务相同的运行环境中执行认证测试。
+5. 修复后继续观察重连频率和缓存命中恢复情况。
 
-## Risk Notes
+## 风险提示
 
-- Avoid rotating credentials again before identifying which deployment still holds stale secrets.
-
+- 在未确认是哪套部署仍持有旧 secret 前，不要再次盲目轮换凭据。

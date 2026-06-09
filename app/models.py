@@ -49,6 +49,10 @@ class ChunkRecord:
 
 @dataclass(slots=True)
 class SessionContext:
+    topic: str | None = None
+    task: str | None = None
+    version: str | None = None
+    need_clarification: bool | None = None
     service_name: str | None = None
     error_code: str | None = None
     environment: str | None = None
@@ -79,6 +83,7 @@ class AskResult:
     action: str
     question: str
     rewritten_query: str
+    retrieval_hits: list[RetrievalHit]
     sources: list[RetrievalHit]
     context: SessionContext
     debug: dict[str, Any]
@@ -118,6 +123,7 @@ class EvalResult(BaseModel):
     retrieval_hit_rate_at_k: float
     source_precision: float
     answer_completeness: float
+    action_accuracy: float
     clarification_trigger_rate: float
     reports: list[dict[str, Any]]
     timings_ms: dict[str, Any] = Field(default_factory=dict)

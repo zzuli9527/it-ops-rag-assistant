@@ -149,6 +149,11 @@ class SQLiteStore:
             row = conn.execute("SELECT * FROM documents WHERE filename = ?", (filename,)).fetchone()
         return self._row_to_document(row) if row else None
 
+    def get_document_by_path(self, file_path: str) -> DocumentRecord | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM documents WHERE file_path = ?", (file_path,)).fetchone()
+        return self._row_to_document(row) if row else None
+
     def list_chunks(self, document_id: str | None = None) -> list[ChunkRecord]:
         query = "SELECT * FROM chunks"
         params: tuple[Any, ...] = ()

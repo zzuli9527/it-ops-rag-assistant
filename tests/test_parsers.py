@@ -22,7 +22,7 @@ def test_parse_multiple_formats(tmp_path: Path) -> None:
     doc = DocxDocument()
     doc.add_heading("DOCX Guide", level=1)
     doc.add_paragraph("Validate configuration.")
-    doc.save(docx_path)
+    doc.save(str(docx_path))
 
     pdf_path = tmp_path / "guide.pdf"
     pdf = fitz.open()
@@ -31,10 +31,9 @@ def test_parse_multiple_formats(tmp_path: Path) -> None:
     pdf.save(pdf_path)
     pdf.close()
 
-    for path in [md_path, txt_path, html_path, docx_path, pdf_path]:
+    for path in (md_path, txt_path, html_path, docx_path, pdf_path):
         title, source_type, blocks = parse_file(path)
         assert title
         assert source_type
         assert blocks
         assert any(block.content for block in blocks)
-

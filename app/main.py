@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -30,6 +31,11 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
     service = RagService(settings)
     service.bootstrap()
     app.state.service = service
+
+    def require_filename(upload: UploadFile) -> str:
+        if not upload.filename:
+            raise HTTPException(status_code=400, detail="filename is required")
+        return upload.filename
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard(request: Request) -> HTMLResponse:
@@ -81,7 +87,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
     @app.post("/ui/upload")
     async def upload_from_page(file: UploadFile = File(...)) -> RedirectResponse:
         data = await file.read()
-        service.ingest_upload(file.filename, data)
+        service.ingest_upload(require_filename(file), data)
         return RedirectResponse("/", status_code=303)
 
     @app.post("/ui/chat")
@@ -100,42 +106,42 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
         return RedirectResponse("/", status_code=303)
 
     @app.get("/api/documents")
-    async def list_documents() -> list[dict]:
+    async def list_documents() -> list[dict[str, Any]]:
         return service.list_documents()
 
     @app.post("/api/documents/upload")
-    async def upload_document(file: UploadFile = File(...)) -> dict:
+    async def upload_document(file: UploadFile = File(...)) -> dict[str, Any]:
         data = await file.read()
-        return service.ingest_upload(file.filename, data).model_dump()
+        return service.ingest_upload(require_filename(file), data).model_dump()
 
     @app.post("/api/documents/sync")
-    async def sync_documents() -> dict:
+    async def sync_documents() -> dict[str, Any]:
         return service.sync_knowledge_sources()
 
     @app.get("/api/documents/{document_id}")
-    async def document_detail(document_id: str) -> dict:
+    async def document_detail(document_id: str) -> dict[str, Any]:
         detail = service.get_document_detail(document_id)
         if detail is None:
             raise HTTPException(status_code=404, detail="document not found")
         return detail
 
     @app.post("/api/documents/{document_id}/reindex")
-    async def reindex_document(document_id: str) -> dict:
+    async def reindex_document(document_id: str) -> dict[str, Any]:
         try:
             return service.reindex_document(document_id).model_dump()
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="document not found") from exc
 
     @app.post("/api/chat/sessions")
-    async def create_session(payload: ChatSessionCreate) -> dict:
+    async def create_session(payload: ChatSessionCreate) -> dict[str, Any]:
         return service.create_session(payload.title)
 
     @app.get("/api/chat/sessions/{session_id}")
-    async def get_session(session_id: str) -> dict:
+    async def get_session(session_id: str) -> dict[str, Any]:
         return service.get_session_detail(session_id)
 
     @app.post("/api/chat/ask")
-    async def ask(payload: ChatRequest) -> dict:
+    async def ask(payload: ChatRequest) -> dict[str, Any]:
         result = service.ask_with_scope(
             question=payload.question,
             session_id=payload.session_id,
@@ -154,15 +160,15 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
         }
 
     @app.post("/api/retrieval/debug")
-    async def retrieval_debug(payload: RetrievalDebugRequest) -> dict:
+    async def retrieval_debug(payload: RetrievalDebugRequest) -> dict[str, Any]:
         return service.debug_retrieval(payload.question, payload.session_id, payload.document_scope)
 
     @app.post("/api/eval/run")
-    async def run_eval(payload: EvalRunRequest) -> dict:
+    async def run_eval(payload: EvalRunRequest) -> dict[str, Any]:
         return service.run_evaluation(payload.dataset).model_dump()
 
     @app.get("/api/eval/{run_id}")
-    async def get_eval(run_id: str) -> dict:
+    async def get_eval(run_id: str) -> dict[str, Any]:
         detail = service.get_eval_run(run_id)
         if detail is None:
             raise HTTPException(status_code=404, detail="eval run not found")
